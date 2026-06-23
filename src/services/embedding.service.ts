@@ -13,8 +13,8 @@ export class LocalTransformersEmbeddings extends Embeddings {
 
   async init() {
     if (!this.extractor) {
-      // Using a small and very fast model for local embeddings
-      this.extractor = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
+      // Using a modern top-tier BGE small embedding model for highly accurate semantic capture
+      this.extractor = await pipeline('feature-extraction', 'Xenova/bge-small-en-v1.5');
     }
   }
 

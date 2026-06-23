@@ -27,56 +27,114 @@ export async function extractTextFromPDF(filePath: string): Promise<PDFPageText[
   return extracted;
 }
 
-export async function splitPDFText(pages: PDFPageText[], pdfName: string): Promise<any[]> {
-  const allChunks: any[] = [];
-  
-  let currentLaw = "General";
-  let currentLawContent: string[] = [];
-  let currentPage = 1;
+const CHUNK_SIZE = 1000; // Middle of 800-1200
+const OVERLAP = 200;     // Middle of 150-250
+const MAX_LIMIT = 1200;
 
-  const saveChunk = () => {
-    if (currentLawContent.length > 0) {
-      allChunks.push({
-        pageContent: `[Law ${currentLaw}]\n${currentLawContent.join(' ')}`,
-        metadata: {
-          pdfName,
-          law: currentLaw,
-          pageNumber: currentPage
-        }
-      });
-      currentLawContent = [];
-    }
-  };
+function createOverlap(text: string): string {
+  if (text.length <= OVERLAP) return text;
+  const tail = text.slice(-OVERLAP);
+  const spaceIdx = tail.indexOf(' ');
+  return spaceIdx !== -1 ? tail.slice(spaceIdx + 1) : tail;
+}
+
+export async function splitPDFText(pages: PDFPageText[], pdfName: string) {
+  const allChunks: any[] = [];
+  let chunkIndex = 0;
 
   for (const page of pages) {
-    currentPage = page.pageNumber;
-    if (!page.text.trim()) continue;
+    const text = page.text.trim();
+    if (!text) continue;
 
-    // Split text into sentences using basic punctuation heuristics.
-    // This looks for '.', '!', or '?' followed by a space and an uppercase letter or number.
-    const sentences = page.text.split(/(?<=[.?!])\s+(?=[A-Z0-9])/);
+    const chunks: string[] = [];
+    let currentChunk = "";
 
-    for (const sentence of sentences) {
-      const trimmedSentence = sentence.trim();
-      if (!trimmedSentence) continue;
-
-      // Look for a Law number at the start of the sentence (e.g., "24.2.2", "1.1")
-      const lawMatch = trimmedSentence.match(/^(\d{1,2}\.\d{1,2}(?:\.\d{1,2})?)\b/);
-      
-      if (lawMatch) {
-        // We found a new Law section, save the previous chunk
-        saveChunk();
-        
-        currentLaw = lawMatch[1];
-        currentLawContent.push(trimmedSentence);
+    function add(segment: string) {
+      if (currentChunk.length + segment.length > CHUNK_SIZE) {
+        if (currentChunk) chunks.push(currentChunk.trim());
+        currentChunk = createOverlap(currentChunk) + " " + segment.trim();
       } else {
-        currentLawContent.push(trimmedSentence);
+        currentChunk += (currentChunk ? " " : "") + segment.trim();
+      }
+    }
+
+    function process(segment: string) {
+      segment = segment.trim();
+      if (!segment) return;
+
+      if (segment.length <= MAX_LIMIT) {
+        add(segment);
+        return;
+      }
+
+      // Priority 1: Split on paragraph boundary
+      if (segment.includes('\n\n')) {
+        const parts = segment.split('\n\n');
+        if (parts.length > 1 && parts.every(p => p.length < segment.length)) {
+          parts.forEach(p => process(p));
+          return;
+        }
+      }
+
+      // Priority 2: Split on sentence boundary
+      if (segment.includes('. ')) {
+        const parts = segment.split(/(?<=\. )/);
+        if (parts.length > 1 && parts.every(p => p.length < segment.length)) {
+          parts.forEach(p => process(p));
+          return;
+        }
+      }
+
+      // Priority 3: Split at character limit
+      let start = 0;
+      while (start < segment.length) {
+        let end = start + CHUNK_SIZE;
+
+        if (end < segment.length) {
+          const nextSpace = segment.indexOf(' ', end);
+          if (nextSpace !== -1 && nextSpace <= start + MAX_LIMIT) {
+            end = nextSpace;
+          }
+        }
+
+        let chunkText = segment.slice(start, end).trim();
+
+        // If this is the first hard-split chunk, prepend the trailing context
+        if (start === 0 && currentChunk) {
+          chunkText = currentChunk + " " + chunkText;
+          currentChunk = ""; // Clear it since we embedded it
+        }
+
+        chunks.push(chunkText);
+        currentChunk = createOverlap(chunkText);
+
+        start += (CHUNK_SIZE - OVERLAP);
+      }
+    }
+
+    process(text);
+
+    if (currentChunk.trim().length > 50) {
+      chunks.push(currentChunk.trim());
+    }
+
+    // Map to metadata format
+    for (const chunk of chunks) {
+      if (chunk.length > 50) {
+        allChunks.push({
+          pageContent: chunk,
+          metadata: {
+            pdfName,
+            pageNumber: page.pageNumber,
+            chunkIndex: chunkIndex++,
+          }
+        });
       }
     }
   }
-  
-  // Save any remaining content in the last chunk
-  saveChunk();
 
+  console.log(`[PDF] Created ${allChunks.length} chunks from ${pdfName}`);
   return allChunks;
 }
+
+

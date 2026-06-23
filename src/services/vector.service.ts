@@ -10,7 +10,8 @@ interface VectorDocument {
 }
 
 // Tokenizer function: lowercases and splits by word boundaries
-function tokenize(text: string): string[] {
+function tokenize(text: any): string[] {
+  if (!text || typeof text !== 'string') return [];
   return text.toLowerCase().match(/\b\w+\b/g) || [];
 }
 
@@ -32,11 +33,11 @@ export class SimpleMemoryVectorStore {
     console.log(`[Backend] Generating embeddings for ${chunks.length} chunks...`);
     const texts = chunks.map(c => c.pageContent);
     const vectors = await this.embeddings.embedDocuments(texts);
-    
+
     for (let i = 0; i < chunks.length; i++) {
       const tokens = tokenize(chunks[i].pageContent);
       const termFrequencies: Record<string, number> = {};
-      
+
       for (const token of tokens) {
         termFrequencies[token] = (termFrequencies[token] || 0) + 1;
       }
@@ -69,7 +70,7 @@ export class SimpleMemoryVectorStore {
     }
 
     this.avgdl = N > 0 ? totalLength / N : 0;
-    
+
     // Calculate IDF for each term: log( (N - n(q) + 0.5) / (n(q) + 0.5) + 1 )
     this.idf = {};
     for (const token in documentFrequencies) {
@@ -85,32 +86,37 @@ export class SimpleMemoryVectorStore {
     for (const q of queryTokens) {
       const tf = doc.termFrequencies[q] || 0;
       if (tf === 0) continue;
-      
+
       const idf = this.idf[q] || 0;
       const numerator = tf * (this.k1 + 1);
       const denominator = tf + this.k1 * (1 - this.b + this.b * (dl / this.avgdl));
-      
+
       score += idf * (numerator / denominator);
     }
     return score;
   }
 
-  async similaritySearch(query: string, topK: number = 5) {
-    console.log(`[Backend] Performing Hybrid Search (Semantic + BM25) for query: "${query}"...`);
-    
-    // 1. Vector Search
-    const queryVector = await this.embeddings.embedQuery(query);
-    const vectorScores = this.documents.map(doc => ({
-      id: doc.id,
-      score: cosineSimilarity(queryVector, doc.embedding)
-    }));
+  async similaritySearch(queryInput: string | string[], topK: number = 20) {
+    const queries = Array.isArray(queryInput) ? queryInput : [queryInput];
+    console.log(`[Backend] Performing Hybrid Search (Semantic + BM25) for ${queries.length} queries...`);
+
+    // 1. Vector Search (Max Pooling across queries)
+    const queryVectors = await this.embeddings.embedDocuments(queries);
+    const vectorScores = this.documents.map(doc => {
+      let maxScore = -1;
+      for (const qv of queryVectors) {
+        const score = cosineSimilarity(qv, doc.embedding);
+        if (score > maxScore) maxScore = score;
+      }
+      return { id: doc.id, score: maxScore };
+    });
     vectorScores.sort((a, b) => b.score - a.score);
 
     // 2. Keyword Search (BM25)
-    const queryTokens = tokenize(query);
+    const allQueryTokens = Array.from(new Set(queries.flatMap(q => tokenize(q))));
     const keywordScores = this.documents.map(doc => ({
       id: doc.id,
-      score: this.getKeywordScore(queryTokens, doc)
+      score: this.getKeywordScore(allQueryTokens, doc)
     }));
     keywordScores.sort((a, b) => b.score - a.score);
 
@@ -122,23 +128,27 @@ export class SimpleMemoryVectorStore {
       rrfScores.set(doc.id, { doc, score: 0 });
     }
 
+    // Weight: 0.7 Semantic (Semantic leads for natural language)
     vectorScores.forEach((v, rank) => {
-      const current = rrfScores.get(v.id)!;
-      current.score += 1.0 / (RRF_K + rank + 1); // 1-indexed rank
+      const current = rrfScores.get(v.id);
+      if (current) current.score += 0.7 * (1.0 / (RRF_K + rank + 1));
     });
 
+    // Weight: 0.3 BM25 (Supports exact keyword matches)
     keywordScores.forEach((k, rank) => {
-      const current = rrfScores.get(k.id)!;
-      current.score += 1.0 / (RRF_K + rank + 1);
+      const current = rrfScores.get(k.id);
+      if (current) current.score += 0.3 * (1.0 / (RRF_K + rank + 1));
     });
 
-    // 4. Sort and return top results
+
+
+    // 5. Sort and return top results
     const combinedResults = Array.from(rrfScores.values());
     combinedResults.sort((a, b) => b.score - a.score);
 
     const topResults = combinedResults.slice(0, topK);
     console.log(`[Backend] Found top ${topResults.length} matches with Hybrid RRF scores:`, topResults.map(r => r.score.toFixed(4)));
-    
+
     return topResults.map(r => r.doc);
   }
 }
@@ -175,7 +185,7 @@ export async function addChunksToStore(chunks: any[]) {
   await store.addDocuments(chunks);
 }
 
-export async function queryVectorStore(query: string, topK: number = 5) {
+export async function queryVectorStore(queryInput: string | string[], topK: number = 20) {
   const store = await getVectorStore();
-  return store.similaritySearch(query, topK);
+  return store.similaritySearch(queryInput, topK);
 }
