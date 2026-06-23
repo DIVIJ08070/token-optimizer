@@ -15,6 +15,24 @@ function tokenize(text: any): string[] {
   return text.toLowerCase().match(/\b\w+\b/g) || [];
 }
 
+function deduplicateChunks(chunks: VectorDocument[]): VectorDocument[] {
+  const seen = new Set<string>();
+  const unique: VectorDocument[] = [];
+
+  for (const chunk of chunks) {
+    // Create a fingerprint from first 100 characters
+    // This catches chunks that are near-identical due to overlap
+    const fingerprint = chunk.pageContent.trim().slice(0, 100).toLowerCase();
+    
+    if (!seen.has(fingerprint)) {
+      seen.add(fingerprint);
+      unique.push(chunk);
+    }
+  }
+
+  return unique;
+}
+
 export class SimpleMemoryVectorStore {
   documents: VectorDocument[] = [];
   embeddings: LocalTransformersEmbeddings;
@@ -146,10 +164,12 @@ export class SimpleMemoryVectorStore {
     const combinedResults = Array.from(rrfScores.values());
     combinedResults.sort((a, b) => b.score - a.score);
 
-    const topResults = combinedResults.slice(0, topK);
-    console.log(`[Backend] Found top ${topResults.length} matches with Hybrid RRF scores:`, topResults.map(r => r.score.toFixed(4)));
+    const candidateResults = combinedResults.slice(0, topK * 2);
+    const unique = deduplicateChunks(candidateResults.map(r => r.doc));
+    
+    console.log(`[Backend] Found top ${candidateResults.length} matches. After dedup: ${unique.length} unique chunks.`);
 
-    return topResults.map(r => r.doc);
+    return unique.slice(0, topK);
   }
 }
 
