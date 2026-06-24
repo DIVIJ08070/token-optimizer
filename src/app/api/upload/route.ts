@@ -14,8 +14,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'No files provided' }, { status: 400 });
     }
 
-    if (files.length > 2) {
-      return NextResponse.json({ error: 'Maximum 2 PDFs allowed' }, { status: 400 });
+    if (files.length > 50) {
+      return NextResponse.json({ error: 'Maximum 50 PDFs allowed' }, { status: 400 });
     }
 
     const uploadDir = path.join(process.cwd(), 'uploads');

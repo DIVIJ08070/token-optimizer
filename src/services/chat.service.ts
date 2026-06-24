@@ -3,20 +3,24 @@ import { pipeline, env } from '@xenova/transformers';
 // Configure transformers.js
 env.allowLocalModels = false;
 
-async function callGroq(messages: any[], model = 'llama-3.1-8b-instant', max_tokens = 350, temperature = 0.1) {
+async function callGroq(messages: any[], model = 'llama-3.3-70b-versatile', max_tokens = 350, temperature = 0.1, response_format?: any) {
   const apiKey = process.env.GROQ_API_KEY ;
+  
+  const body: any = {
+    model,
+    messages,
+    max_tokens,
+    temperature
+  };
+  if (response_format) body.response_format = response_format;
+
   const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${apiKey}`
     },
-    body: JSON.stringify({
-      model,
-      messages,
-      max_tokens,
-      temperature
-    })
+    body: JSON.stringify(body)
   });
 
   if (!response.ok) {
@@ -29,7 +33,15 @@ async function callGroq(messages: any[], model = 'llama-3.1-8b-instant', max_tok
 }
 
 export async function expandQuery(question: string): Promise<string[]> {
-  const prompt = `You are a query expansion engine. Generate exactly 3 semantic search variants (synonyms, related phrases) for the user's question. Do not answer the question. Separate each variant with a comma. Do not include quotes or bullet points.`;
+  const prompt = `You are a query expansion engine. Generate exactly 3 alternative search queries for the user's question.
+
+Rules:
+- Preserve the original intent.
+- Do NOT change the task.
+- Do NOT ask a different question.
+- Keep all key entities.
+- Separate each variant with a comma.
+- Do not include quotes or bullet points.`;
   
   let generated = "";
   try {
@@ -85,43 +97,73 @@ export async function rerankChunks(question: string, chunks: any[], topK: number
   return scoredChunks.slice(0, topK).map(s => s.chunk);
 }
 
-export async function generateAnswer(contextChunks: any[], question: string) {
-  // Combine chunk texts, separated by double newlines for clear boundaries
-  const context = contextChunks.map((c: any) => c.pageContent).join('\n\n');
+export function verifyEvidence(jsonResult: any, chunks: any[]) {
+  const validChunkIds = new Set(chunks.map((c: any) => c.metadata.chunkIndex));
+  const validCitations: any[] = [];
+  
+  for (const ev of jsonResult.evidence || []) {
+    if (ev.chunkId !== undefined && validChunkIds.has(ev.chunkId)) {
+      const sourceChunk = chunks.find((c: any) => c.metadata.chunkIndex === ev.chunkId);
+      if (sourceChunk) {
+        validCitations.push({
+          pdf: sourceChunk.metadata.pdfName,
+          page: sourceChunk.metadata.pageNumber,
+          chunkId: ev.chunkId
+        });
+      }
+    } else {
+      console.warn(`[Backend] Deterministic Verification FAILED for chunkId ${ev.chunkId}. Stripped from citations.`);
+    }
+  }
+  
+  const uniqueCitations = Array.from(new Set(validCitations.map(s => JSON.stringify(s)))).map(s => JSON.parse(s as string));
+  
+  return {
+    answer: jsonResult.answer || "No answer generated.",
+    sources: uniqueCitations
+  };
+}
 
-  const systemPrompt = `You are an expert assistant. Answer ONLY using the provided context. If the answer is not explicitly stated, say:\n"I couldn't find this information in the documents."\nDo not infer or summarize unrelated sections.`;
+export async function generateAnswer(contextChunks: any[], question: string) {
+  const context = contextChunks.map((c: any) => `[Chunk ID: ${c.metadata.chunkIndex}, Source: ${c.metadata.pdfName}, Page ${c.metadata.pageNumber}]\n${c.pageContent}`).join('\n\n');
+
+  const systemPrompt = `You are an expert, highly precise assistant. Synthesize the provided evidence to answer the user's question. 
+Only answer from the evidence provided. If the evidence is incomplete, say so.
+You must output JSON. Respond STRICTLY with this JSON structure:
+{
+  "answer": "Your detailed answer here...",
+  "evidence": [
+    {"chunkId": 17},
+    {"chunkId": 23}
+  ]
+}
+Only cite Chunk IDs that actively support your answer. Rely ONLY on the provided context.`;
+  
+  const maxTokens = 3500;
   const userPrompt = `Context:\n${context}\n\nQuestion: ${question}`;
 
-  console.log("[Backend] ---------- LLM CONTEXT DUMP ----------");
-  console.log(context);
-  console.log("[Backend] --------------------------------------");
-  console.log(`[Backend] Question asked: "${question}"`);
+  console.log("[Backend] Generating Answer in JSON Mode...");
 
-  let answer = "";
+  let raw = "";
   try {
-    answer = await callGroq([
+    raw = await callGroq([
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userPrompt }
-    ], 'llama-3.3-70b-versatile', 350, 0.1);
+    ], 'llama-3.3-70b-versatile', maxTokens, 0.1, { type: "json_object" });
     
-    console.log("[Backend] Groq Generated Answer:", answer);
   } catch (error) {
     console.error("[Backend] Groq API Error:", error);
-    answer = "The AI model encountered an error or API failure, but here is the exact text found in your PDFs:\n\n" + context;
+    return { answer: "Error generating response.", evidence: [] };
   }
 
-  // Extract sources
-  const sources = contextChunks.map((c: any) => ({
-    pdf: c.metadata.pdfName,
-    page: c.metadata.pageNumber,
-    chunk: c.metadata.chunkIndex
-  }));
-
-  // Filter unique sources
-  const uniqueSources = Array.from(new Set(sources.map(s => JSON.stringify(s)))).map(s => JSON.parse(s as string));
-
-  return {
-    answer,
-    sources: uniqueSources
-  };
+  try {
+    const parsed = JSON.parse(raw);
+    return {
+      answer: parsed.answer || "No answer generated.",
+      evidence: Array.isArray(parsed.evidence) ? parsed.evidence : []
+    };
+  } catch(e) {
+    console.error("[Backend] JSON Parse Failed:", e);
+    return { answer: raw, evidence: [] };
+  }
 }

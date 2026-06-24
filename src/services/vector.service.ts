@@ -15,22 +15,53 @@ function tokenize(text: any): string[] {
   return text.toLowerCase().match(/\b\w+\b/g) || [];
 }
 
-function deduplicateChunks(chunks: VectorDocument[]): VectorDocument[] {
-  const seen = new Set<string>();
-  const unique: VectorDocument[] = [];
+function jaccardSimilarity(str1: string, str2: string): number {
+  const set1 = new Set(str1.toLowerCase().split(/\s+/));
+  const set2 = new Set(str2.toLowerCase().split(/\s+/));
+  const intersection = new Set([...set1].filter(x => set2.has(x)));
+  const union = new Set([...set1, ...set2]);
+  if (union.size === 0) return 0;
+  return intersection.size / union.size;
+}
+
+export function apply3LayerDedup(chunks: VectorDocument[], finalK: number, maxPerPDF: number): VectorDocument[] {
+  const finalChunks: VectorDocument[] = [];
+  const exactSeen = new Set<string>();
+  const semanticSeen: string[] = [];
+  const pdfCounts: Record<string, number> = {};
 
   for (const chunk of chunks) {
-    // Create a fingerprint from first 100 characters
-    // This catches chunks that are near-identical due to overlap
-    const fingerprint = chunk.pageContent.trim().slice(0, 100).toLowerCase();
+    if (finalChunks.length >= finalK) break;
+
+    const pdfName = chunk.metadata.pdfName || 'unknown';
     
-    if (!seen.has(fingerprint)) {
-      seen.add(fingerprint);
-      unique.push(chunk);
+    // Layer 3: Source diversity
+    if ((pdfCounts[pdfName] || 0) >= maxPerPDF) continue;
+
+    // Layer 1: Exact dedup (first 100 chars)
+    const exactFingerprint = chunk.pageContent.trim().slice(0, 100).toLowerCase();
+    if (exactSeen.has(exactFingerprint)) continue;
+
+    // Layer 2: Semantic dedup
+    let isSemanticDuplicate = false;
+    const semanticFingerprint = chunk.pageContent.trim().slice(0, 200);
+    for (const seen of semanticSeen) {
+      if (jaccardSimilarity(semanticFingerprint, seen) > 0.6) {
+        isSemanticDuplicate = true;
+        break;
+      }
     }
+    
+    if (isSemanticDuplicate) continue;
+
+    // Accept chunk
+    exactSeen.add(exactFingerprint);
+    semanticSeen.push(semanticFingerprint);
+    pdfCounts[pdfName] = (pdfCounts[pdfName] || 0) + 1;
+    finalChunks.push(chunk);
   }
 
-  return unique;
+  return finalChunks;
 }
 
 export class SimpleMemoryVectorStore {
@@ -164,12 +195,41 @@ export class SimpleMemoryVectorStore {
     const combinedResults = Array.from(rrfScores.values());
     combinedResults.sort((a, b) => b.score - a.score);
 
-    const candidateResults = combinedResults.slice(0, topK * 2);
-    const unique = deduplicateChunks(candidateResults.map(r => r.doc));
-    
-    console.log(`[Backend] Found top ${candidateResults.length} matches. After dedup: ${unique.length} unique chunks.`);
+    const topResults = combinedResults.slice(0, topK);
+    console.log(`[Backend] Found top ${topResults.length} matches with Hybrid RRF.`);
 
-    return unique.slice(0, topK);
+    return topResults.map(r => r.doc);
+  }
+
+  expandWithNeighbors(chunks: any[]): any[] {
+    const expandedSet = new Set<any>();
+    
+    for (const chunk of chunks) {
+      expandedSet.add(chunk);
+      
+      const pdfName = chunk.metadata.pdfName;
+      const chunkIndex = chunk.metadata.chunkIndex;
+      
+      if (pdfName && chunkIndex !== undefined) {
+        const prev = this.documents.find(d => d.metadata.pdfName === pdfName && d.metadata.chunkIndex === chunkIndex - 1);
+        if (prev) expandedSet.add(prev);
+        
+        const next = this.documents.find(d => d.metadata.pdfName === pdfName && d.metadata.chunkIndex === chunkIndex + 1);
+        if (next) expandedSet.add(next);
+      }
+    }
+    
+    const result = Array.from(expandedSet);
+    console.log(`[Backend] Neighbor Expansion: Expanded ${chunks.length} chunks to ${result.length} chunks.`);
+    return result;
+  }
+
+  /**
+   * Returns a shallow copy of every document in the store.
+   * Used by the aggregation retriever (Task D) which needs to score all chunks.
+   */
+  getAllChunks(): VectorDocument[] {
+    return [...this.documents];
   }
 }
 
@@ -208,4 +268,91 @@ export async function addChunksToStore(chunks: any[]) {
 export async function queryVectorStore(queryInput: string | string[], topK: number = 20) {
   const store = await getVectorStore();
   return store.similaritySearch(queryInput, topK);
+}
+
+export async function expandWithNeighbors(chunks: any[]) {
+  const store = await getVectorStore();
+  return store.expandWithNeighbors(chunks);
+}
+
+/**
+ * Returns every stored chunk — used by the aggregation retriever (Task D).
+ */
+export async function getAllChunksFromStore() {
+  const store = await getVectorStore();
+  return store.getAllChunks();
+}
+
+// ---------------------------------------------------------------------------
+// Task B — Upstream dedup helpers
+//
+// These run on the fused-100 candidates BEFORE the cross-encoder cut, so
+// majority clusters cannot monopolise the top slots.  They reuse the exact
+// same Layer 1 / Layer 2 / Layer 3 logic as apply3LayerDedup — no second
+// similarity implementation.
+// ---------------------------------------------------------------------------
+
+/** Layer 1 + Layer 2: content dedup only (no per-source cap). */
+function applyContentDedup(chunks: VectorDocument[]): VectorDocument[] {
+  const exactSeen = new Set<string>();
+  const semanticSeen: string[] = [];
+  const result: VectorDocument[] = [];
+
+  for (const chunk of chunks) {
+    // Layer 1: exact fingerprint (first 100 chars)
+    const exactFp = chunk.pageContent.trim().slice(0, 100).toLowerCase();
+    if (exactSeen.has(exactFp)) continue;
+
+    // Layer 2: Jaccard on first 200 chars
+    const semanticFp = chunk.pageContent.trim().slice(0, 200);
+    let isDuplicate = false;
+    for (const seen of semanticSeen) {
+      if (jaccardSimilarity(semanticFp, seen) > 0.6) {
+        isDuplicate = true;
+        break;
+      }
+    }
+    if (isDuplicate) continue;
+
+    exactSeen.add(exactFp);
+    semanticSeen.push(semanticFp);
+    result.push(chunk);
+  }
+
+  return result;
+}
+
+/** Layer 3: per-source cap, preserving rank order. */
+function applyPerSourceCap(chunks: VectorDocument[], maxPerPdf: number): VectorDocument[] {
+  const counts: Record<string, number> = {};
+  const result: VectorDocument[] = [];
+
+  for (const chunk of chunks) {
+    const pdf = chunk.metadata.pdfName || 'unknown';
+    const count = counts[pdf] ?? 0;
+    if (count >= maxPerPdf) continue;
+    counts[pdf] = count + 1;
+    result.push(chunk);
+  }
+
+  return result;
+}
+
+/**
+ * Upstream dedup: run content dedup (Layers 1+2) then a per-source cap
+ * (Layer 3) on a candidate list in rank order, before the cross-encoder cut.
+ *
+ * @param chunks     The RRF-sorted candidates (top 100 from hybrid search).
+ * @param maxPerPdf  Per-source cap.  Use 3 on the normal path (Section 5).
+ */
+export function applyUpstreamDedup(
+  chunks: VectorDocument[],
+  maxPerPdf: number
+): VectorDocument[] {
+  const deduped   = applyContentDedup(chunks);
+  const capped    = applyPerSourceCap(deduped, maxPerPdf);
+  console.log(
+    `[Backend] Upstream dedup: ${chunks.length} → ${deduped.length} (content dedup) → ${capped.length} (per-source cap ${maxPerPdf})`
+  );
+  return capped;
 }

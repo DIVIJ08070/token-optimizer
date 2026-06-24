@@ -22,8 +22,8 @@ export default function Home() {
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
       const selected = Array.from(e.target.files);
-      if (selected.length > 2) {
-        alert('Maximum 2 PDFs allowed');
+      if (selected.length > 50) {
+        alert('Maximum 50 PDFs allowed');
         return;
       }
       setFiles(selected);
@@ -92,7 +92,7 @@ export default function Home() {
         <div className="lg:col-span-1 space-y-6 flex flex-col">
           <div className="bg-slate-900/50 p-6 rounded-2xl border border-slate-800 shadow-xl backdrop-blur-sm flex-1">
             <h1 className="text-3xl font-extrabold bg-gradient-to-r from-indigo-400 to-cyan-400 bg-clip-text text-transparent mb-2">DocuMind</h1>
-            <p className="text-slate-400 text-sm mb-8">Upload up to 2 PDFs and start interacting with your documents completely locally.</p>
+            <p className="text-slate-400 text-sm mb-8">Upload up to 50 PDFs and start interacting with your documents completely locally.</p>
 
             {!isUploaded ? (
               <div className="space-y-4">
@@ -112,7 +112,7 @@ export default function Home() {
                     <Upload className="w-8 h-8 text-indigo-400" />
                   </div>
                   <p className="text-sm text-slate-300 font-medium">Click to select PDFs</p>
-                  <p className="text-xs text-slate-500 mt-2">Max 2 documents</p>
+                  <p className="text-xs text-slate-500 mt-2">Max 50 documents</p>
                 </div>
 
                 {files.length > 0 && (
