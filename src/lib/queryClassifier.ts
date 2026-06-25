@@ -1,72 +1,138 @@
-/**
- * Task C — Query classifier
- *
- * Returns true when the question is asking to aggregate/compare a single rule
- * across many or all sources.  Must stay conservative: a deep single-document
- * question (e.g. "explain the full LBW procedure in the ICC laws") must
- * return false so it stays on the normal path.
- */
+import { LocalTransformersEmbeddings } from '@/services/embedding.service';
 
-// Patterns that strongly signal "across many sources" intent.
-// All matching is case-insensitive.
-const AGGREGATION_PATTERNS: RegExp[] = [
-  // Enumerate everything
-  /\b(list|enumerate|summarise|summarize)\b.{0,60}\b(all|every|each)\b/i,
+// ---------------------------------------------------------------------------
+// Intent Examples (Multilingual)
+// ---------------------------------------------------------------------------
 
-  // "every / each <source noun>"
-  /\b(every|each)\b.{0,30}\b(source|rulebook|document|competition|edition|version|code|book|set of rules)\b/i,
-
-  // "across all …"
-  /\bacross\s+all\b/i,
-
-  // "for each source / document / …"
-  /\bfor\s+each\s+(source|document|rulebook|competition|edition)\b/i,
-
-  // "which sources … <verb>"
-  /\bwhich\s+(sources?|documents?|rulebooks?|competitions?|editions?)\b/i,
-
-  // "do … sources … allow/permit/prohibit/differ/conflict/vary/not"
-  /\b(sources?|documents?|rulebooks?)\b.{0,60}\b(allow|permit|prohibit|differ|conflict|vary|do\s+not)\b/i,
-
-  // "compare … sources / all / each"
-  /\bcompare\b.{0,60}\b(sources?|all|each)\b/i,
-
-  // "identify / flag … conflicts"
-  /\b(identify|flag)\b.{0,60}\bconflicts?\b/i,
-
-  // "how many sources …"
-  /\bhow\s+many\s+(sources?|documents?|rulebooks?)\b/i,
-
-  // "vary across" / "differ across"
-  /\b(var(y|ies|ied|ying)|differ(s|ed|ing)?)\s+across\b/i,
-
-  // bare "which sources"
-  /\bwhich\s+sources?\b/i,
+const GREETING_EXAMPLES = [
+  "hi",
+  "hello there",
+  "hey",
+  "good morning",
+  "namaste",
+  "kem cho",
+  "hola",
+  "greetings",
+  "suprabhat"
 ];
 
-// Negative guard: patterns that are clearly single-document depth questions.
-// If any fires, we return false regardless.
-const SINGLE_DOC_GUARDS: RegExp[] = [
-  // "in the <proper-noun> rules / laws / code"
-  /\bin\s+the\s+(ICC|MCC|ECB|BCB|PCB|BCCI|CA|CSA|NZC|WICB|SLC|ZC|ACB)\b/i,
-
-  // "explain … procedure / clause / law / rule" — depth, not breadth
-  /\bexplain\b.{0,60}\b(procedure|clause|law|rule|provision|section|article)\b/i,
-
-  // "full" + single topic
-  /\bfull\b.{0,40}\b(procedure|explanation|detail|description)\b/i,
+const LEAD_EXAMPLES = [
+  // English
+  "I want to build an app",
+  "I need a website created",
+  "Looking for a software development team",
+  "Can you give me a quote for a new project",
+  // Hindi / Hinglish
+  "mujhe ek app banwana hai",
+  "website banwani hai",
+  "humko software develop karwana hai",
+  "project ka estimate chahiye",
+  // Gujarati
+  "mare app banavavi chhe",
+  "software project mate developer joiye che",
+  "app ni prise su che",
+  "app ni prise",
+  "app no kharcho",
+  "ketla rupiya thase",
+  // Pricing/Cost
+  "how much does an app cost",
+  "price for an app",
+  "what is the cost",
+  "price ketli thase"
 ];
 
-export function isAggregationQuery(query: string): boolean {
-  // Short-circuit: if any single-doc guard fires, it is NOT an aggregation.
-  for (const guard of SINGLE_DOC_GUARDS) {
-    if (guard.test(query)) return false;
-  }
+const OFF_TOPIC_EXAMPLES = [
+  // General Knowledge & Sports
+  "aaj match kon jeeta",
+  "what's the weather today?",
+  "who is the prime minister of India?",
+  "recommend me a good restaurant",
+  "tell me a joke",
+  "who won the world cup",
+  "aaj barish hogi kya",
+  // Abuse & Meta
+  "are you dumb",
+  "this service is useless",
+  "are you a bot or a human?",
+  "tu pagal hai kya",
+  "gande kaam",
+];
 
-  // Otherwise, fire on any aggregation pattern.
-  for (const pattern of AGGREGATION_PATTERNS) {
-    if (pattern.test(query)) return true;
-  }
+const CLARIFY_EXAMPLES = [
+  "mane nathi samaj pdti",
+  "I didn't get that",
+  "what do you mean",
+  "could you explain",
+  "can you repeat that",
+  "mujhe samajh nahi aaya"
+];
 
-  return false;
+// ---------------------------------------------------------------------------
+// Cached Embeddings
+// ---------------------------------------------------------------------------
+
+let greetingEmbeddings: number[][] = [];
+let leadEmbeddings: number[][] = [];
+let offTopicEmbeddings: number[][] = [];
+let clarifyEmbeddings: number[][] = [];
+let isInitialized = false;
+
+// Configurable threshold for semantic intent matching
+const INTENT_THRESHOLD = 0.65;
+
+export async function initIntentClassifier(embedder: LocalTransformersEmbeddings) {
+  if (isInitialized) return;
+  console.log('[Backend] Initializing Semantic Intent Classifier...');
+  greetingEmbeddings = await embedder.embedDocuments(GREETING_EXAMPLES);
+  leadEmbeddings = await embedder.embedDocuments(LEAD_EXAMPLES);
+  offTopicEmbeddings = await embedder.embedDocuments(OFF_TOPIC_EXAMPLES);
+  clarifyEmbeddings = await embedder.embedDocuments(CLARIFY_EXAMPLES);
+  isInitialized = true;
+  console.log('[Backend] Semantic Intent Classifier Ready.');
 }
+
+function cosineSimilarity(vecA: number[], vecB: number[]) {
+  let dotProduct = 0;
+  let normA = 0;
+  let normB = 0;
+  for (let i = 0; i < vecA.length; i++) {
+    dotProduct += vecA[i] * vecB[i];
+    normA += vecA[i] * vecA[i];
+    normB += vecB[i] * vecB[i];
+  }
+  if (normA === 0 || normB === 0) return 0;
+  return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
+}
+
+function getMaxSimilarity(queryVector: number[], intentVectors: number[][]): number {
+  let maxSim = -1;
+  for (const v of intentVectors) {
+    const sim = cosineSimilarity(queryVector, v);
+    if (sim > maxSim) maxSim = sim;
+  }
+  return maxSim;
+}
+
+export function classifyIntent(queryVector: number[]): 'greeting' | 'lead' | 'off_topic' | 'clarify' | null {
+  if (!isInitialized) {
+    console.warn('[Backend] classifyIntent called before initialization!');
+    return null;
+  }
+
+  const greetingScore = getMaxSimilarity(queryVector, greetingEmbeddings);
+  const leadScore = getMaxSimilarity(queryVector, leadEmbeddings);
+  const offTopicScore = getMaxSimilarity(queryVector, offTopicEmbeddings);
+  const clarifyScore = getMaxSimilarity(queryVector, clarifyEmbeddings);
+
+  const maxScore = Math.max(greetingScore, leadScore, offTopicScore, clarifyScore);
+
+  if (maxScore >= INTENT_THRESHOLD) {
+    if (maxScore === offTopicScore) return 'off_topic';
+    if (maxScore === clarifyScore) return 'clarify';
+    if (maxScore === greetingScore) return 'greeting';
+    if (maxScore === leadScore) return 'lead';
+  }
+
+  return null;
+}
+

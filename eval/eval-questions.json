@@ -1,0 +1,27 @@
+[
+  {
+    "question": "REPLACE WITH: a question whose answer IS in your approved pairs",
+    "expectedPairId": "REPLACE WITH: the id from data/faq-store.json, or null to just check it answers",
+    "outOfScope": false
+  },
+  {
+    "question": "REPLACE WITH: another in-scope question",
+    "expectedPairId": null,
+    "outOfScope": false
+  },
+  {
+    "question": "REPLACE WITH: a rephrasing of an in-scope question",
+    "expectedPairId": null,
+    "outOfScope": false
+  },
+  {
+    "question": "REPLACE WITH: an out-of-scope question your PDFs do NOT cover",
+    "expectedPairId": null,
+    "outOfScope": true
+  },
+  {
+    "question": "REPLACE WITH: another out-of-scope question",
+    "expectedPairId": null,
+    "outOfScope": true
+  }
+]

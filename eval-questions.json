@@ -1,0 +1,456 @@
+{
+  "_README": {
+    "purpose": "Eval set for the Palm Infotech FAQ chatbot. Run each question through the chat route and check the bot's actual behavior against expected_behavior. This set deliberately includes the cases that have been FAILING (price-as-lead, gibberish, off-topic, mid-conversation, multilingual intent) so the eval exposes threshold/intent/state bugs systematically.",
+    "how_to_use": "For each entry: send `question` to the bot. Compare what the bot does to `expected_behavior` + `expected_band`. Score: PASS if behavior matches, FAIL otherwise. Pay special attention to entries where expected_band is 'refuse' or expected_route is 'lead' — those are where the bot has been force-matching wrong answers.",
+    "categories": {
+      "in_scope_answerable": "Bot SHOULD answer from an approved pair (Band 1 / high score).",
+      "in_scope_multilingual": "Same answerable questions in Hindi/Gujarati/Hinglish — tests multilingual matching.",
+      "lead_intent": "Build/project/booking intent — must ROUTE TO LEAD CAPTURE, not answer.",
+      "price_intent": "Price/cost/quote — ALWAYS a lead, never answered (your own business rule).",
+      "out_of_scope": "Unrelated to the document — must REFUSE (Band 3 / low score), not force-match.",
+      "gibberish": "Nonsense input — must refuse/clarify, not return a random pair.",
+      "abuse_or_meta": "Insults / 'are you a bot' — must NOT force-match to a random FAQ.",
+      "greeting": "Greetings and casual chat — greeting response.",
+      "confusion": "User says they don't understand — should clarify.",
+      "mid_conversation_lead": "Replies that only make sense as a follow-up (name/phone after lead capture asked) — must be captured as lead data, NOT run through FAQ matching.",
+      "near_miss": "On-topic but no exact pair exists — Band 2 (generate+cache) OR a 'did you mean' suggestion, depending on score."
+    }
+  },
+  "questions": [
+    {
+      "id": "q01",
+      "category": "in_scope_answerable",
+      "question": "When was Palm Infotech founded?",
+      "expected_band": "answer",
+      "expected_route": "faq",
+      "expected_behavior": "Answers: founded April 2021.",
+      "ground_truth": "April 2021"
+    },
+    {
+      "id": "q02",
+      "category": "in_scope_answerable",
+      "question": "How many apps has Palm Infotech delivered?",
+      "expected_band": "answer",
+      "expected_route": "faq",
+      "expected_behavior": "Answers: 120+ apps.",
+      "ground_truth": "120+ apps delivered"
+    },
+    {
+      "id": "q03",
+      "category": "in_scope_answerable",
+      "question": "How big is the team?",
+      "expected_band": "answer",
+      "expected_route": "faq",
+      "expected_behavior": "Answers: 40+ professionals.",
+      "ground_truth": "40+ professionals"
+    },
+    {
+      "id": "q04",
+      "category": "in_scope_answerable",
+      "question": "What services does Palm Infotech offer?",
+      "expected_band": "answer",
+      "expected_route": "faq",
+      "expected_behavior": "Answers with IT consulting, web + custom mobile app development, UI/UX, QA, maintenance, resource augmentation.",
+      "ground_truth": "IT Consulting; Web & Custom Mobile App Development (iOS, Android, Flutter, React Native); UI/UX; QA & Testing; Maintenance & Post Launch Support; Resource Augmentation"
+    },
+    {
+      "id": "q05",
+      "category": "in_scope_answerable",
+      "question": "What mobile platforms do you develop for?",
+      "expected_band": "answer",
+      "expected_route": "faq",
+      "expected_behavior": "Answers: iOS, Android, Flutter, React Native.",
+      "ground_truth": "iOS, Android, Flutter, React Native"
+    },
+    {
+      "id": "q06",
+      "category": "in_scope_answerable",
+      "question": "How do I contact Palm Infotech?",
+      "expected_band": "answer",
+      "expected_route": "faq",
+      "expected_behavior": "Answers with email/phone/website.",
+      "ground_truth": "www.palminfotech.com, contact@palminfotech.com, +91 8320118036"
+    },
+    {
+      "id": "q07",
+      "category": "in_scope_answerable",
+      "question": "Which countries does Palm Infotech work in?",
+      "expected_band": "answer",
+      "expected_route": "faq",
+      "expected_behavior": "Answers with global reach countries.",
+      "ground_truth": "USA, UK, UAE, Australia, South Africa, Canada, Austria, India"
+    },
+    {
+      "id": "q08",
+      "category": "in_scope_answerable",
+      "question": "Who are some of your clients?",
+      "expected_band": "answer",
+      "expected_route": "faq",
+      "expected_behavior": "Answers with domestic client names.",
+      "ground_truth": "Merci Global, Sleep Guardian, Triple D, Sadhna Textile, Shah Consultancy"
+    },
+    {
+      "id": "q09",
+      "category": "in_scope_answerable",
+      "question": "What is the company's slogan?",
+      "expected_band": "answer",
+      "expected_route": "faq",
+      "expected_behavior": "Answers: More Than Quality, It's Our Signature.",
+      "ground_truth": "More Than Quality, It's Our Signature"
+    },
+    {
+      "id": "q10",
+      "category": "in_scope_answerable",
+      "question": "What does the Wonder App do?",
+      "expected_band": "answer",
+      "expected_route": "faq",
+      "expected_behavior": "Answers about real-time location/interest-based social connection.",
+      "ground_truth": "Connect with people nearby in real time based on location and shared interests"
+    },
+    {
+      "id": "q11",
+      "category": "in_scope_answerable",
+      "question": "What is your development process?",
+      "expected_band": "answer",
+      "expected_route": "faq",
+      "expected_behavior": "Answers with the 6 steps (Requirement Gathering ... Kick-Off).",
+      "ground_truth": "Requirement Gathering, Understanding Document & Queries, Rough Estimation & Timeline, Proposal Draft & Feedback, Final Estimation & Agreement, Kick-Off"
+    },
+    {
+      "id": "q12",
+      "category": "in_scope_answerable",
+      "question": "What does a Business Analyst do on the team?",
+      "expected_band": "answer",
+      "expected_route": "faq",
+      "expected_behavior": "Answers: prepares user stories, clarifies business logic.",
+      "ground_truth": "Prepares user stories and clarifies business logic"
+    },
+    {
+      "id": "q13",
+      "category": "in_scope_multilingual",
+      "question": "Palm Infotech kab bani thi?",
+      "expected_band": "answer",
+      "expected_route": "faq",
+      "expected_behavior": "Hindi: 'when was it founded' -> April 2021.",
+      "ground_truth": "April 2021"
+    },
+    {
+      "id": "q14",
+      "category": "in_scope_multilingual",
+      "question": "tame kya kya service aapo cho?",
+      "expected_band": "answer",
+      "expected_route": "faq",
+      "expected_behavior": "Gujarati: 'what services do you provide' -> services list.",
+      "ground_truth": "Services list"
+    },
+    {
+      "id": "q15",
+      "category": "in_scope_multilingual",
+      "question": "kitne log kaam karte hai team me",
+      "expected_band": "answer",
+      "expected_route": "faq",
+      "expected_behavior": "Hindi: 'how many people on the team' -> 40+.",
+      "ground_truth": "40+ professionals"
+    },
+    {
+      "id": "q16",
+      "category": "in_scope_multilingual",
+      "question": "contact number su che",
+      "expected_band": "answer",
+      "expected_route": "faq",
+      "expected_behavior": "Gujarati: 'what is the contact number' -> phone/email.",
+      "ground_truth": "+91 8320118036"
+    },
+    {
+      "id": "q17",
+      "category": "in_scope_multilingual",
+      "question": "kitne apps banaye hai aapne",
+      "expected_band": "answer",
+      "expected_route": "faq",
+      "expected_behavior": "Hindi/Hinglish: 'how many apps have you built' -> 120+.",
+      "ground_truth": "120+ apps"
+    },
+    {
+      "id": "q18",
+      "category": "lead_intent",
+      "question": "I want to build an app",
+      "expected_band": "n/a",
+      "expected_route": "lead",
+      "expected_behavior": "Routes to LEAD CAPTURE (asks name + phone). Does NOT answer with a portfolio app."
+    },
+    {
+      "id": "q19",
+      "category": "lead_intent",
+      "question": "mare app banavu che",
+      "expected_band": "n/a",
+      "expected_route": "lead",
+      "expected_behavior": "Gujarati 'I want to build an app' -> LEAD CAPTURE."
+    },
+    {
+      "id": "q20",
+      "category": "lead_intent",
+      "question": "mare app book karavu che",
+      "expected_band": "n/a",
+      "expected_route": "lead",
+      "expected_behavior": "Gujarati 'I want to book/get an app made' -> LEAD CAPTURE. (This FAILED before -> matched Wonder App.)"
+    },
+    {
+      "id": "q21",
+      "category": "lead_intent",
+      "question": "mujhe ek website banwani hai",
+      "expected_band": "n/a",
+      "expected_route": "lead",
+      "expected_behavior": "Hindi 'I want a website built' -> LEAD CAPTURE."
+    },
+    {
+      "id": "q22",
+      "category": "lead_intent",
+      "question": "can you make something for my business",
+      "expected_band": "n/a",
+      "expected_route": "lead",
+      "expected_behavior": "English build-intent with no keyword 'app' -> LEAD CAPTURE."
+    },
+    {
+      "id": "q23",
+      "category": "lead_intent",
+      "question": "mane ek mobile app joiye che",
+      "expected_band": "n/a",
+      "expected_route": "lead",
+      "expected_behavior": "Gujarati 'I need a mobile app' -> LEAD CAPTURE."
+    },
+    {
+      "id": "q24",
+      "category": "price_intent",
+      "question": "how much does it cost to build an app?",
+      "expected_band": "n/a",
+      "expected_route": "lead",
+      "expected_behavior": "Price question -> LEAD CAPTURE (never answered). Business rule: price is always a lead."
+    },
+    {
+      "id": "q25",
+      "category": "price_intent",
+      "question": "app ketla price ma banse",
+      "expected_band": "n/a",
+      "expected_route": "lead",
+      "expected_behavior": "Gujarati 'how much will the app cost' -> LEAD CAPTURE. (This FAILED before -> matched Wonder App.)"
+    },
+    {
+      "id": "q26",
+      "category": "price_intent",
+      "question": "kitna kharcha aayega app ka",
+      "expected_band": "n/a",
+      "expected_route": "lead",
+      "expected_behavior": "Hindi 'how much will the app cost' -> LEAD CAPTURE."
+    },
+    {
+      "id": "q27",
+      "category": "price_intent",
+      "question": "what's your pricing",
+      "expected_band": "n/a",
+      "expected_route": "lead",
+      "expected_behavior": "Generic pricing question -> LEAD CAPTURE."
+    },
+    {
+      "id": "q28",
+      "category": "price_intent",
+      "question": "kitne paise lagenge ek app me",
+      "expected_band": "n/a",
+      "expected_route": "lead",
+      "expected_behavior": "Hindi 'how much money for an app' -> LEAD CAPTURE."
+    },
+    {
+      "id": "q29",
+      "category": "price_intent",
+      "question": "quote for a project",
+      "expected_band": "n/a",
+      "expected_route": "lead",
+      "expected_behavior": "Quote request -> LEAD CAPTURE."
+    },
+    {
+      "id": "q30",
+      "category": "out_of_scope",
+      "question": "what's the weather today?",
+      "expected_band": "refuse",
+      "expected_route": "refuse",
+      "expected_behavior": "REFUSE: 'I can only help with questions about Palm Infotech...'. Must NOT force-match to a pair. NO API call."
+    },
+    {
+      "id": "q31",
+      "category": "out_of_scope",
+      "question": "who is the prime minister of India?",
+      "expected_band": "refuse",
+      "expected_route": "refuse",
+      "expected_behavior": "REFUSE. Unrelated to the document. NO API call."
+    },
+    {
+      "id": "q32",
+      "category": "out_of_scope",
+      "question": "recommend me a good restaurant",
+      "expected_band": "refuse",
+      "expected_route": "refuse",
+      "expected_behavior": "REFUSE. NO API call. (Note: must not match the food/beverage portfolio app.)"
+    },
+    {
+      "id": "q33",
+      "category": "out_of_scope",
+      "question": "tell me a joke",
+      "expected_band": "refuse",
+      "expected_route": "refuse",
+      "expected_behavior": "REFUSE / politely steer back. NO API call."
+    },
+    {
+      "id": "q34",
+      "category": "out_of_scope",
+      "question": "aaj match kon jeeta",
+      "expected_band": "refuse",
+      "expected_route": "refuse",
+      "expected_behavior": "Hindi 'who won the match today' -> REFUSE. (Must not match the fantasy-sports portfolio app.)"
+    },
+    {
+      "id": "q35",
+      "category": "gibberish",
+      "question": "asdkjfh aslkdjf",
+      "expected_band": "refuse",
+      "expected_route": "refuse",
+      "expected_behavior": "REFUSE / clarify. Must NOT return a random pair (slogan etc.). This FAILED before."
+    },
+    {
+      "id": "q36",
+      "category": "gibberish",
+      "question": "fhjhwfjewfh",
+      "expected_band": "refuse",
+      "expected_route": "refuse",
+      "expected_behavior": "REFUSE / clarify. (This exact input previously matched the slogan.)"
+    },
+    {
+      "id": "q37",
+      "category": "gibberish",
+      "question": "???",
+      "expected_band": "refuse",
+      "expected_route": "refuse",
+      "expected_behavior": "Clarify ('could you rephrase?'). Must not force-match."
+    },
+    {
+      "id": "q38",
+      "category": "abuse_or_meta",
+      "question": "are you dumb",
+      "expected_band": "refuse",
+      "expected_route": "refuse",
+      "expected_behavior": "Stay calm / offer help. Must NOT force-match to a random pair (previously matched team-size)."
+    },
+    {
+      "id": "q39",
+      "category": "abuse_or_meta",
+      "question": "are you a bot or a human?",
+      "expected_band": "special",
+      "expected_route": "meta",
+      "expected_behavior": "Honest, brief answer; stays on purpose. Must NOT force-match to a random FAQ."
+    },
+    {
+      "id": "q40",
+      "category": "abuse_or_meta",
+      "question": "this service is useless",
+      "expected_band": "refuse",
+      "expected_route": "refuse",
+      "expected_behavior": "Detect negativity, offer human help. Must NOT force-match."
+    },
+    {
+      "id": "q41",
+      "category": "greeting",
+      "question": "hello",
+      "expected_band": "special",
+      "expected_route": "greeting",
+      "expected_behavior": "Greeting response. Must NOT return the slogan or any fact."
+    },
+    {
+      "id": "q42",
+      "category": "greeting",
+      "question": "hi there",
+      "expected_band": "special",
+      "expected_route": "greeting",
+      "expected_behavior": "Greeting response."
+    },
+    {
+      "id": "q43",
+      "category": "greeting",
+      "question": "kem cho",
+      "expected_band": "special",
+      "expected_route": "greeting",
+      "expected_behavior": "Gujarati 'how are you' -> greeting / friendly response."
+    },
+    {
+      "id": "q44",
+      "category": "greeting",
+      "question": "namaste",
+      "expected_band": "special",
+      "expected_route": "greeting",
+      "expected_behavior": "Greeting response."
+    },
+    {
+      "id": "q45",
+      "category": "confusion",
+      "question": "mane nathi samaj pdti",
+      "expected_band": "special",
+      "expected_route": "clarify",
+      "expected_behavior": "Gujarati 'I don't understand' -> CLARIFY ('what would you like to know about Palm Infotech?'). Not a forced fact, not just a bare greeting."
+    },
+    {
+      "id": "q46",
+      "category": "confusion",
+      "question": "I didn't get that",
+      "expected_band": "special",
+      "expected_route": "clarify",
+      "expected_behavior": "Clarify / offer topics."
+    },
+    {
+      "id": "q47",
+      "category": "mid_conversation_lead",
+      "question": "divij 9033800655",
+      "expected_band": "n/a",
+      "expected_route": "lead_capture_save",
+      "expected_behavior": "WHEN lead capture has just asked for name+phone: parse 'divij' as name and '9033800655' as phone, SAVE the lead, confirm. Must NOT run FAQ matching (previously matched the slogan and LOST the lead). REQUIRES conversation state.",
+      "note": "Run this ONLY after triggering a lead (e.g. right after q18). This tests conversation state, not stateless matching."
+    },
+    {
+      "id": "q48",
+      "category": "mid_conversation_lead",
+      "question": "my name is Rahul, number 9876543210",
+      "expected_band": "n/a",
+      "expected_route": "lead_capture_save",
+      "expected_behavior": "After lead capture asked: extract name=Rahul, phone=9876543210, save lead, confirm. No FAQ matching."
+    },
+    {
+      "id": "q49",
+      "category": "mid_conversation_lead",
+      "question": "9033800655",
+      "expected_band": "n/a",
+      "expected_route": "lead_capture_save",
+      "expected_behavior": "If a name was already given and only phone is missing: accept this as the phone. If nothing in progress: ask how to help (don't FAQ-match a bare number)."
+    },
+    {
+      "id": "q50",
+      "category": "near_miss",
+      "question": "do you build apps for the healthcare industry?",
+      "expected_band": "generate_or_suggest",
+      "expected_route": "faq_or_band2",
+      "expected_behavior": "On-topic (they build apps across industries) but no exact pair. Acceptable: Band 2 generate+cache a grounded answer, OR 'did you mean' suggestions, OR route to lead if read as project intent. Must NOT confidently return an unrelated portfolio app as if it were the answer."
+    },
+    {
+      "id": "q51",
+      "category": "near_miss",
+      "question": "what is your refund policy?",
+      "expected_band": "refuse",
+      "expected_route": "refuse",
+      "expected_behavior": "Document has NO refund info -> REFUSE honestly (don't invent, don't force-match). Tests that 'on-topic-sounding but not covered' refuses rather than hallucinating."
+    },
+    {
+      "id": "q52",
+      "category": "near_miss",
+      "question": "do you provide ongoing support after launch?",
+      "expected_band": "answer",
+      "expected_route": "faq",
+      "expected_behavior": "IS covered (Maintenance & Post Launch Support) -> should answer. Tests that a real-but-reworded question still matches.",
+      "ground_truth": "Maintenance & Post Launch Support"
+    }
+  ]
+}

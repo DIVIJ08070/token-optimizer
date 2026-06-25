@@ -1,4 +1,9 @@
+import fs from 'fs';
+import path from 'path';
 import { LocalTransformersEmbeddings } from './embedding.service';
+
+const STORE_FILE = path.join(process.cwd(), 'data', 'vector-store.json');
+
 
 interface VectorDocument {
   id: number;
@@ -102,7 +107,42 @@ export class SimpleMemoryVectorStore {
     }
 
     this.recalculateBM25();
+    this.saveStore();
     console.log(`[Backend] Success! Stored ${chunks.length} chunks. Total chunks in memory: ${this.documents.length}`);
+  }
+
+  saveStore() {
+    try {
+      const data = JSON.stringify(this.documents);
+      fs.writeFileSync(STORE_FILE, data, 'utf-8');
+      console.log(`[Backend] Vector store saved to disk: ${this.documents.length} chunks.`);
+    } catch (e) {
+      console.error('[Backend] Failed to save vector store:', e);
+    }
+  }
+
+  loadStore() {
+    try {
+      if (fs.existsSync(STORE_FILE)) {
+        const data = fs.readFileSync(STORE_FILE, 'utf-8');
+        this.documents = JSON.parse(data);
+        this.recalculateBM25();
+        console.log(`[Backend] Vector store loaded from disk: ${this.documents.length} chunks.`);
+      }
+    } catch (e) {
+      console.error('[Backend] Failed to load vector store:', e);
+    }
+  }
+
+  deleteDocumentsBySource(source: string) {
+    const initialLength = this.documents.length;
+    this.documents = this.documents.filter(doc => doc.metadata.pdfName !== source);
+    if (this.documents.length < initialLength) {
+      this.documents.forEach((doc, i) => doc.id = i);
+      this.recalculateBM25();
+      this.saveStore();
+      console.log(`[Backend] Deleted ${initialLength - this.documents.length} chunks for ${source}`);
+    }
   }
 
   private recalculateBM25() {
@@ -255,14 +295,30 @@ export async function getVectorStore(): Promise<SimpleMemoryVectorStore> {
     console.log("[Backend] Initializing new Hybrid Vector Store memory...");
     const embeddings = new LocalTransformersEmbeddings();
     vectorStore = new SimpleMemoryVectorStore(embeddings);
+    vectorStore.loadStore();
     globalAny.__vectorStore = vectorStore;
   }
   return vectorStore;
 }
 
+/**
+ * Resets the in-memory vector store so the next upload starts fresh.
+ * Does NOT touch disk because the vector store is RAM-only.
+ */
+export function resetVectorStore(): void {
+  vectorStore = null;
+  globalAny.__vectorStore = null;
+  console.log('[Backend] Vector store reset — memory cleared.');
+}
+
 export async function addChunksToStore(chunks: any[]) {
   const store = await getVectorStore();
   await store.addDocuments(chunks);
+}
+
+export async function deleteChunksBySource(source: string) {
+  const store = await getVectorStore();
+  store.deleteDocumentsBySource(source);
 }
 
 export async function queryVectorStore(queryInput: string | string[], topK: number = 20) {

@@ -127,11 +127,23 @@ export function verifyEvidence(jsonResult: any, chunks: any[]) {
 export async function generateAnswer(contextChunks: any[], question: string) {
   const context = contextChunks.map((c: any) => `[Chunk ID: ${c.metadata.chunkIndex}, Source: ${c.metadata.pdfName}, Page ${c.metadata.pageNumber}]\n${c.pageContent}`).join('\n\n');
 
-  const systemPrompt = `You are an expert, highly precise assistant. Synthesize the provided evidence to answer the user's question. 
-Only answer from the evidence provided. If the evidence is incomplete, say so.
-You must output JSON. Respond STRICTLY with this JSON structure:
+  const systemPrompt = `You are a precise, evidence-based assistant. Answer the user's question using ONLY the provided context chunks.
+Rules:
+- Answer concisely and directly. Do not pad or repeat yourself.
+- Only use information from the context. If the context does not contain enough to answer, say so honestly.
+- Never invent facts, names, numbers, or details not present in the context.
+- Cite only the Chunk IDs that directly support your answer.
+- You must generate EXACTLY 4 rephrasings/synonyms of the user's question to capture different ways users might ask the same thing. One must be a natural English synonym, one in conversational Hindi (romanized/Hinglish), one in Gujarati (romanized), and one in highly colloquial Hinglish.
+You must output valid JSON exactly matching this structure:
 {
-  "answer": "Your detailed answer here...",
+  "answer": "Your answer here, written as a clear human-readable response.",
+  "grounded_quote": "Exact phrase copied character-for-character from the context that supports the answer",
+  "rephrasings": [
+    "English synonym question",
+    "Hindi romanized question",
+    "Gujarati romanized question",
+    "Hinglish colloquial question"
+  ],
   "evidence": [
     {"chunkId": 17},
     {"chunkId": 23}
@@ -160,10 +172,12 @@ Only cite Chunk IDs that actively support your answer. Rely ONLY on the provided
     const parsed = JSON.parse(raw);
     return {
       answer: parsed.answer || "No answer generated.",
+      grounded_quote: parsed.grounded_quote || "",
+      rephrasings: Array.isArray(parsed.rephrasings) ? parsed.rephrasings : [],
       evidence: Array.isArray(parsed.evidence) ? parsed.evidence : []
     };
   } catch(e) {
     console.error("[Backend] JSON Parse Failed:", e);
-    return { answer: raw, evidence: [] };
+    return { answer: raw, grounded_quote: "", evidence: [] };
   }
 }
