@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { addFeedback } from '@/services/faq-store.service';
+import { addFeedback, loadStore } from '@/services/faq-store.service';
 
 export async function POST(req: NextRequest) {
   try {
@@ -9,7 +9,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Invalid payload' }, { status: 400 });
     }
 
-    const success = await addFeedback(pairId, feedback);
+    loadStore();
+    const success = addFeedback(pairId, feedback);
 
     if (success) {
       return NextResponse.json({ success: true });

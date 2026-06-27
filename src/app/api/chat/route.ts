@@ -26,6 +26,25 @@ import { v4 as uuidv4 } from 'uuid';
 const THRESHOLD_HIGH = 0.55; // Strong semantic match (Sweep optimized)
 const THRESHOLD_LOW  = 0.35; // Weak semantic match (Lowered safely due to gibberish filter)
 
+// Friendly, user-facing scope name. Override per deployment via ASSISTANT_SCOPE
+// in .env.local. Never show raw PDF filenames to end users.
+const ASSISTANT_SCOPE = process.env.ASSISTANT_SCOPE?.trim() || 'Palm Infotech';
+const OUT_OF_SCOPE_MSG =
+  `I can only help with questions about ${ASSISTANT_SCOPE} — try asking about our services, team, or process. 😊`;
+
+// Turn a raw source filename (e.g. "9af3-Palm_Infotech_Overview.pdf") into a
+// clean label for display. Falls back to the configured scope name.
+function prettifySource(raw?: string): string {
+  if (!raw) return ASSISTANT_SCOPE;
+  const cleaned = raw
+    .replace(/^[0-9a-f]{8}-[0-9a-f-]{27,}-/i, '') // strip leading uuid- prefix
+    .replace(/\.[a-z0-9]+$/i, '')                  // strip extension
+    .replace(/[_-]+/g, ' ')                          // underscores/dashes → spaces
+    .replace(/\s+/g, ' ')
+    .trim();
+  return cleaned || ASSISTANT_SCOPE;
+}
+
 function isGrounded(quote: string, chunkText: string): boolean {
   if (!quote || quote.trim() === '') return false;
   const normalizedQuote = quote.replace(/\s+/g, ' ').trim();
@@ -76,11 +95,11 @@ export async function POST(req: NextRequest) {
     // 0.1 Gibberish Pre-Filter
     if (isGibberish(question)) {
       console.log(`[Chat] Intercepted gibberish input: "${question}"`);
-      const payload: any = { 
-        answer: "I can only help with questions about Palm_Infotech_Overview_Plain_Text.pdf — try asking about services, team size, or our process.", 
-        sources: [], 
-        suggestions: [], 
-        isFallback: true 
+      const payload: any = {
+        answer: OUT_OF_SCOPE_MSG,
+        sources: [],
+        suggestions: [],
+        isFallback: true
       };
       if (isDebug) payload.pathUsed = 'gibberish-filter';
       return NextResponse.json(payload);
@@ -147,11 +166,11 @@ export async function POST(req: NextRequest) {
 
     if (intent === 'off_topic') {
       console.log(`[Chat] Intent classified as off_topic.`);
-      const payload: any = { 
-        answer: "I can only help with questions about Palm_Infotech_Overview_Plain_Text.pdf — try asking about services, team size, or our process.", 
-        sources: [], 
-        suggestions: [], 
-        isFallback: true 
+      const payload: any = {
+        answer: OUT_OF_SCOPE_MSG,
+        sources: [],
+        suggestions: [],
+        isFallback: true
       };
       if (isDebug) payload.pathUsed = 'intent-off-topic';
       return sendJson(payload);
@@ -298,11 +317,11 @@ export async function POST(req: NextRequest) {
     // TIER 3: Low Confidence (Refusal)
     // ------------------------------------------------------------------
     console.log(`[Chat] Score below LOW → fallback refusal.`);
-    const docContext = results.length > 0 && results[0].pair.source ? results[0].pair.source : 'the document';
+    const docContext = prettifySource(results[0]?.pair.source) || ASSISTANT_SCOPE;
     const suggestions = results.slice(0, 3).map(r => r.pair.question);
 
-    const payload: any = { 
-      answer: `I can only help with questions about ${docContext} — try asking about:`, 
+    const payload: any = {
+      answer: `I can only help with questions about ${docContext} — try asking about:`,
       sources: [],
       suggestions,
       isFallback: true
@@ -317,6 +336,7 @@ export async function POST(req: NextRequest) {
 
   } catch (error: any) {
     console.error('[Chat] Error:', error);
-    return sendJson({ error: error.message }, { status: 500 });
+    // sendJson is scoped inside the try block — use NextResponse directly here.
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }

@@ -249,6 +249,19 @@ export function getPairById(id: string): FaqPair | undefined {
   return _pairs.find(p => p.id === id);
 }
 
+/**
+ * Record a user thumbs up/down on an auto-generated answer.
+ * Returns false if the pair no longer exists.
+ */
+export function addFeedback(id: string, feedback: 'up' | 'down'): boolean {
+  const pair = _pairs.find(p => p.id === id);
+  if (!pair) return false;
+  if (feedback === 'up') pair.thumbsUp = (pair.thumbsUp ?? 0) + 1;
+  else pair.thumbsDown = (pair.thumbsDown ?? 0) + 1;
+  saveStore();
+  return true;
+}
+
 export function addPairs(pairs: Omit<FaqPair, 'status'>[]): void {
   const newPairs: FaqPair[] = pairs.map(p => ({ ...p, status: 'pending' as PairStatus }));
   _pairs.push(...newPairs);

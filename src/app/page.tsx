@@ -216,8 +216,12 @@ export default function Home() {
     if (appStep === 'review') {
       fetchPairs();
       fetchMissedQueries();
+    } else if (appStep === 'chat' && pairs.length === 0) {
+      // Loaded directly into chat (e.g. "Jump to Chat") — fetch pairs so the
+      // empty state can show starter questions.
+      fetchPairs();
     }
-  }, [appStep, fetchPairs]);
+  }, [appStep, fetchPairs]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const fetchMissedQueries = async () => {
     try {
@@ -719,17 +723,38 @@ export default function Home() {
                 <Bot className="w-5 h-5 text-indigo-400" />
                 <h2 className="font-semibold text-slate-200">FAQ Chat</h2>
                 <span className="ml-auto text-xs text-emerald-400/80 bg-emerald-500/10 border border-emerald-500/20 rounded-full px-2.5 py-0.5">
-                  Local-only · No API calls
+                  Instant · grounded in your docs
                 </span>
               </div>
 
               {/* Messages */}
               <div className="flex-1 overflow-y-auto p-5 space-y-5 custom-scrollbar">
                 {chatHistory.length === 0 && (
-                  <div className="h-full flex flex-col items-center justify-center text-slate-500 opacity-60">
+                  <div className="h-full flex flex-col items-center justify-center text-slate-500 px-4">
                     <MessageCircleQuestion className="w-14 h-14 mb-3 text-slate-600" />
-                    <p className="text-base">Ask anything covered in your approved FAQs.</p>
-                    <p className="text-xs mt-1">Out-of-scope questions will be declined honestly.</p>
+                    <p className="text-base text-slate-400">Ask anything covered in your approved FAQs.</p>
+                    <p className="text-xs mt-1 text-slate-600">Out-of-scope questions are declined honestly.</p>
+
+                    {(() => {
+                      const starters = pairs
+                        .filter(p => p.status === 'approved')
+                        .slice(0, 4)
+                        .map(p => p.question);
+                      if (starters.length === 0) return null;
+                      return (
+                        <div className="mt-6 flex flex-wrap gap-2 justify-center max-w-md">
+                          {starters.map((s, i) => (
+                            <button
+                              key={i}
+                              onClick={() => handleSuggestionClick(s)}
+                              className="text-xs text-indigo-300 bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/20 hover:border-indigo-500/40 rounded-full px-3 py-1.5 transition-colors"
+                            >
+                              {s}
+                            </button>
+                          ))}
+                        </div>
+                      );
+                    })()}
                   </div>
                 )}
 
