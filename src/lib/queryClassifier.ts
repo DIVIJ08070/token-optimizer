@@ -10,7 +10,12 @@ const GREETING_EXAMPLES = [
   "hey",
   "good morning",
   "namaste",
+  "namaste bhai",
+  "hello bro",
+  "hey bhai",
   "kem cho",
+  "kem cho bhai",
+  "ram ram",
   "hola",
   "greetings",
   "suprabhat"

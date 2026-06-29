@@ -32,6 +32,78 @@ async function callGroq(messages: any[], model = 'llama-3.3-70b-versatile', max_
   return data.choices[0].message.content.trim();
 }
 
+/**
+ * Translate a user's message into English for retrieval. The FAQ store is in
+ * English, and the local embedder handles English far better than romanized
+ * Gujarati/Hindi — so searching with the English version of the query is what
+ * makes multilingual matching accurate. Uses the cheapest/fastest Groq model.
+ * Falls back to the original text on any failure.
+ */
+export async function translateToEnglish(text: string): Promise<string> {
+  const system = `You translate a customer's message to a business into literal English. The input may be Hindi, Gujarati, Hinglish, or romanized (Latin-script) Indian language.
+STRICT rules:
+- Translate ONLY what is written. Do NOT answer the question, add context, or guess.
+- Do NOT invent, add, or substitute any company/product names. Keep names that ARE present (e.g. "Wonder App") exactly; if no name is present, add none.
+- If you cannot translate a word, keep it as-is rather than guessing.
+- Output ONLY the literal English translation — one short sentence, no quotes, no notes.`;
+  try {
+    // 70B — the 8B model hallucinates/mistranslates romanized Gujarati, which
+    // wrecks retrieval accuracy. This is the accuracy-critical step, so it's
+    // worth the better model (~$0.001/query, only for non-English questions).
+    const out = await callGroq(
+      [{ role: 'system', content: system }, { role: 'user', content: text }],
+      'llama-3.3-70b-versatile',
+      120,
+      0,
+    );
+    return out?.trim() || text;
+  } catch (e) {
+    console.error('[Translate→EN] Failed, using original:', e);
+    return text;
+  }
+}
+
+/**
+ * Translate a finished answer into the user's language (Hindi/Gujarati),
+ * matching the casual WhatsApp tone. Uses the cheapest/fastest Groq model.
+ * Callers cache the result so each answer is translated at most once per
+ * language. Falls back to the original English answer on any failure.
+ */
+export async function translateAnswer(
+  answer: string,
+  langName: 'Hindi' | 'Gujarati',
+  userQuestion: string,
+  script: 'roman' | 'native' = 'roman',
+): Promise<string> {
+  const scriptRule = script === 'roman'
+    ? `- CRITICAL: Write ONLY in romanized ${langName} using Latin/English letters (e.g. "tamne madad kari shaku"). Do NOT use Devanagari or Gujarati script at all.`
+    : `- Write in the native ${langName} script.`;
+
+  const system = `You translate a friendly WhatsApp business chatbot's reply into ${langName}.
+Rules:
+${scriptRule}
+- Keep it warm, short, and natural — like a real person texting, not a textbook.
+- Preserve ALL facts, numbers, names, and emojis exactly. Do not add or remove information.
+- Output ONLY the translated reply. No quotes, no notes, no preamble.`;
+  const user = `User's message: "${userQuestion}"\n\nReply to translate into ${langName}:\n${answer}`;
+
+  try {
+    // 70B for translation quality (esp. Gujarati). This runs at most ONCE per
+    // (answer, language) — the result is cached on the pair — so the better
+    // model costs nothing on repeats.
+    const out = await callGroq(
+      [{ role: 'system', content: system }, { role: 'user', content: user }],
+      'llama-3.3-70b-versatile',
+      400,
+      0.2,
+    );
+    return out?.trim() || answer;
+  } catch (e) {
+    console.error('[Translate] Failed, serving original:', e);
+    return answer;
+  }
+}
+
 export async function expandQuery(question: string): Promise<string[]> {
   const prompt = `You are a query expansion engine. Generate exactly 3 alternative search queries for the user's question.
 

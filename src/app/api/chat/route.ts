@@ -11,12 +11,13 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { hybridSearch, loadStore, addPairs, getEmbedder } from '@/services/faq-store.service';
+import { hybridSearch, loadStore, addAndIndexPair, getEmbedder, savePairTranslation, type FaqPair } from '@/services/faq-store.service';
 import { normalizeQuery } from '@/lib/queryNormalizer';
 import { logMissedQuery } from '@/services/miss-logger.service';
 import { initIntentClassifier, classifyIntent } from '@/lib/queryClassifier';
 import { queryVectorStore } from '@/services/vector.service';
-import { generateAnswer } from '@/services/chat.service';
+import { generateAnswer, translateAnswer, translateToEnglish } from '@/services/chat.service';
+import { detectLang, langName, msg, type Lang } from '@/lib/i18n';
 import { v4 as uuidv4 } from 'uuid';
 
 // ---------------------------------------------------------------------------
@@ -25,12 +26,13 @@ import { v4 as uuidv4 } from 'uuid';
 
 const THRESHOLD_HIGH = 0.55; // Strong semantic match (Sweep optimized)
 const THRESHOLD_LOW  = 0.35; // Weak semantic match (Lowered safely due to gibberish filter)
+// Only offer a mid-tier "did you mean?" when the competing matches are near-
+// high. Below this, a weak tie is unhelpful — generate a grounded answer instead.
+const THRESHOLD_DISAMBIG = 0.50;
 
 // Friendly, user-facing scope name. Override per deployment via ASSISTANT_SCOPE
 // in .env.local. Never show raw PDF filenames to end users.
 const ASSISTANT_SCOPE = process.env.ASSISTANT_SCOPE?.trim() || 'Palm Infotech';
-const OUT_OF_SCOPE_MSG =
-  `I can only help with questions about ${ASSISTANT_SCOPE} — try asking about our services, team, or process. 😊`;
 
 // Turn a raw source filename (e.g. "9af3-Palm_Infotech_Overview.pdf") into a
 // clean label for display. Falls back to the configured scope name.
@@ -88,15 +90,17 @@ export async function POST(req: NextRequest) {
     }
 
     const isDebug = Boolean(debug);
-    const normalizedQ = normalizeQuery(question);
 
-    console.log(`[Chat] Raw: "${question.slice(0, 50)}" | Normalized: "${normalizedQ.slice(0, 50)}"`);
+    // Detect the user's language (local, free). All replies are returned in it.
+    const lang: Lang = detectLang(question);
+
+    console.log(`[Chat] Raw: "${question.slice(0, 50)}" | Lang: ${lang}`);
 
     // 0.1 Gibberish Pre-Filter
     if (isGibberish(question)) {
       console.log(`[Chat] Intercepted gibberish input: "${question}"`);
       const payload: any = {
-        answer: OUT_OF_SCOPE_MSG,
+        answer: msg('offTopic', lang, ASSISTANT_SCOPE),
         sources: [],
         suggestions: [],
         isFallback: true
@@ -127,7 +131,7 @@ export async function POST(req: NextRequest) {
         }
         
         return NextResponse.json({
-          answer: "Thank you! Our team will review your details and contact you shortly.",
+          answer: msg('leadThanks', lang),
           nextState: 'idle'
         });
       } else {
@@ -144,55 +148,60 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(data, init);
     };
 
-    // 1. Initialize & Embed Query
+    // Return a stored answer in the user's language. English → unchanged (free).
+    // Otherwise serve a cached translation, or translate once (cheap 8B model)
+    // and cache it on the pair so every future hit is free.
+    // Match the user's script: romanized input → romanized reply.
+    const script: 'roman' | 'native' = /[઀-૿ऀ-ॿ]/.test(question) ? 'native' : 'roman';
+    const localizeAnswer = async (answer: string, pair?: FaqPair): Promise<string> => {
+      if (lang === 'en') return answer;
+      const cacheKey = `${lang}:${script}`;
+      const cached = pair?.answer_i18n?.[cacheKey];
+      if (cached) return cached;
+      const translated = await translateAnswer(answer, langName(lang) as 'Hindi' | 'Gujarati', question, script);
+      if (pair) savePairTranslation(pair.id, cacheKey, translated);
+      return translated;
+    };
+
+    // 1. Initialize embedder + classifier.
     const embedder = getEmbedder();
     await initIntentClassifier(embedder);
-    const queryEmbedding = await embedder.embedQuery(normalizedQ);
 
-    // 2. Semantic Intent Classification
-    const intent = classifyIntent(queryEmbedding);
+    // Intent (greeting/lead/off_topic/clarify) is classified on the ORIGINAL-
+    // language query — the classifier's examples are multilingual ("namaste",
+    // "kem cho", romanized leads), so translating first would break them.
+    const intentEmbedding = await embedder.embedQuery(normalizeQuery(question));
 
-    if (intent === 'greeting') {
-      return sendJson({ answer: "Hello! How can I help you today?", isGreeting: true });
+    // Greetings are unambiguous and must short-circuit BEFORE the FAQ search
+    // (and before paying for translation). lead / off_topic / clarify are
+    // deferred until AFTER search so they can't hijack a real FAQ question.
+    if (classifyIntent(intentEmbedding) === 'greeting') {
+      return sendJson({ answer: msg('greeting', lang), isGreeting: true });
     }
 
-    if (intent === 'lead') {
-      return sendJson({ 
-        answer: "Great! Let's get started on your project. Could you please provide your name and phone number?", 
-        isLeadCapture: true,
-        nextState: 'awaiting_lead'
-      });
-    }
+    // Translate non-English queries to English for RETRIEVAL only. The FAQ store
+    // and local embedder are English-first, so embedding a romanized Gujarati/
+    // Hindi query directly gives inaccurate matches (it latches onto shared
+    // words like "app"). We search in English, then reply in the user's
+    // language. English queries skip this and stay 100% free.
+    const searchQuestion = lang === 'en' ? question : await translateToEnglish(question);
+    if (lang !== 'en') console.log(`[Chat] Translated for search: "${searchQuestion.slice(0, 60)}"`);
+    const normalizedQ = normalizeQuery(searchQuestion);
+    const queryEmbedding = lang === 'en'
+      ? intentEmbedding
+      : await embedder.embedQuery(normalizedQ);
 
-    if (intent === 'off_topic') {
-      console.log(`[Chat] Intent classified as off_topic.`);
-      const payload: any = {
-        answer: OUT_OF_SCOPE_MSG,
-        sources: [],
-        suggestions: [],
-        isFallback: true
-      };
-      if (isDebug) payload.pathUsed = 'intent-off-topic';
-      return sendJson(payload);
-    }
-
-    if (intent === 'clarify') {
-      const payload: any = { 
-        answer: "I didn't quite catch that. Could you please rephrase your question?", 
-        sources: [], 
-        suggestions: [], 
-        isFallback: true 
-      };
-      if (isDebug) payload.pathUsed = 'intent-clarify';
-      return sendJson(payload);
-    }
-
-    // 3. Hybrid Search (using precomputed embedding)
+    // 2. Hybrid Search FIRST.
+    //    A strong FAQ match must always win over the fuzzy intent classifier —
+    //    otherwise a real question like "What is the Wonder App about?" gets
+    //    hijacked into lead capture simply because it contains the word "app".
+    //    Intent (greeting / lead / off_topic / clarify) is only consulted below,
+    //    AFTER we know there is no high-confidence stored answer.
     const results = await hybridSearch(normalizedQ, 5, queryEmbedding);
 
     if (results.length === 0) {
       console.log('[Chat] Store is empty.');
-      const payload: any = { answer: "I don't have an approved answer for that question.", sources: [], suggestions: [], isFallback: true };
+      const payload: any = { answer: msg('noAnswer', lang), sources: [], suggestions: [], isFallback: true };
       if (isDebug) payload.pathUsed = 'faq-semantic-empty';
       return sendJson(payload);
     }
@@ -232,13 +241,13 @@ export async function POST(req: NextRequest) {
       if (!isExactMatch && topMatches.length > 1 && topMatches[1].vecScore >= THRESHOLD_HIGH) {
         return sendJson({
           isDidYouMean: true,
-          answer: "I found multiple matching answers. Which did you mean?",
+          answer: msg('didYouMean', lang),
           suggestions: topMatches.map(r => r.pair.question),
         });
       }
 
       const payload: any = {
-        answer: top.pair.answer,
+        answer: await localizeAnswer(top.pair.answer, top.pair),
         sources: [{ pdf: top.pair.source, chunkRef: top.pair.chunk_ref }],
         matchedQuestion: top.pair.question,
       };
@@ -251,6 +260,44 @@ export async function POST(req: NextRequest) {
       return sendJson(payload);
     }
 
+    // ------------------------------------------------------------------
+    // Intent classification — ONLY now that we know there is no
+    // high-confidence stored answer. This keeps real FAQ questions from
+    // being hijacked by the fuzzy lead/off-topic classifier.
+    // ------------------------------------------------------------------
+    const intent = classifyIntent(intentEmbedding);
+
+    if (intent === 'lead') {
+      return sendJson({
+        answer: msg('lead', lang),
+        isLeadCapture: true,
+        nextState: 'awaiting_lead'
+      });
+    }
+
+    if (intent === 'off_topic') {
+      console.log(`[Chat] Intent classified as off_topic.`);
+      const payload: any = {
+        answer: msg('offTopic', lang, ASSISTANT_SCOPE),
+        sources: [],
+        suggestions: [],
+        isFallback: true
+      };
+      if (isDebug) payload.pathUsed = 'intent-off-topic';
+      return sendJson(payload);
+    }
+
+    if (intent === 'clarify') {
+      const payload: any = {
+        answer: msg('clarify', lang),
+        sources: [],
+        suggestions: [],
+        isFallback: true
+      };
+      if (isDebug) payload.pathUsed = 'intent-clarify';
+      return sendJson(payload);
+    }
+
     // Log the miss since we fell below the HIGH threshold
     logMissedQuery(question, top.pair.question, top.score);
 
@@ -258,11 +305,18 @@ export async function POST(req: NextRequest) {
     // TIER 2: Mid Confidence (Fallback Generation)
     // ------------------------------------------------------------------
     if (top.vecScore >= THRESHOLD_LOW) {
-      // Check for a middling tie
-      if (!isExactMatch && topMatches.length > 1 && topMatches[1].vecScore >= THRESHOLD_LOW) {
+      // Only disambiguate on a genuinely strong, near-high tie. A weak tie
+      // (e.g. a generic "what services do you provide") is better served by
+      // generating a grounded answer than by asking "did you mean?".
+      if (
+        !isExactMatch &&
+        topMatches.length > 1 &&
+        top.vecScore >= THRESHOLD_DISAMBIG &&
+        topMatches[1].vecScore >= THRESHOLD_DISAMBIG
+      ) {
         return sendJson({
           isDidYouMean: true,
-          answer: "I'm not completely sure. Did you mean one of these?",
+          answer: msg('notSure', lang),
           suggestions: topMatches.map(r => r.pair.question),
         });
       }
@@ -272,28 +326,34 @@ export async function POST(req: NextRequest) {
       const chunks = await queryVectorStore(normalizedQ, 3);
       if (chunks.length > 0) {
         console.log(`[Chat] Calling API to generate answer from ${chunks.length} chunks.`);
-        const { answer, grounded_quote, evidence, rephrasings } = await generateAnswer(chunks, question);
-        
+        const { answer, grounded_quote, evidence, rephrasings } = await generateAnswer(chunks, searchQuestion);
+
         const combinedChunkText = chunks.map(c => c.pageContent).join('\n');
-        
+
         if (isGrounded(grounded_quote, combinedChunkText)) {
-          console.log('[Chat] Generated fallback answer passed verbatim grounding check. Saving to pending cache.');
-          
-          const newPair = {
+          console.log('[Chat] Generated fallback passed grounding check → caching + indexing as a free, reusable answer.');
+
+          const newPair: FaqPair = {
             id: uuidv4(),
-            question: question,
-            rephrasings: rephrasings || [],
+            // Store the English question for accurate future matching; keep the
+            // user's original phrasing as a rephrasing so it also matches directly.
+            question: searchQuestion,
+            rephrasings: [question, ...(rephrasings || [])].filter((r, i, a) => a.indexOf(r) === i),
             answer: answer,
             source: chunks[0].metadata.pdfName || 'unknown',
             chunk_ref: chunks[0].metadata.chunkIndex !== undefined ? String(chunks[0].metadata.chunkIndex) : 'fallback',
             grounded_quote: grounded_quote,
-            status: 'pending' as const,
+            status: 'approved',
             isAutoGenerated: true
           };
-          addPairs([newPair]);
-          
+          // Self-learning cache: embed locally + make it live NOW, so the next
+          // time this (or a similar) question is asked it is answered for free.
+          await addAndIndexPair(newPair);
+
           const payload: any = {
-            answer: answer,
+            // Translate into the user's language (and cache it on the pair so
+            // future hits are free). English is returned unchanged.
+            answer: await localizeAnswer(answer, newPair),
             sources: evidence.map((ev: any) => ({ chunkRef: ev.chunkId })),
             matchedQuestion: question,
             apiCalled: true,
@@ -321,7 +381,7 @@ export async function POST(req: NextRequest) {
     const suggestions = results.slice(0, 3).map(r => r.pair.question);
 
     const payload: any = {
-      answer: `I can only help with questions about ${docContext} — try asking about:`,
+      answer: msg('fallbackIntro', lang, docContext),
       sources: [],
       suggestions,
       isFallback: true
